@@ -48,6 +48,12 @@ class VCruiseHelper(VCruiseHelperSP):
 
     self.get_minimum_set_speed(is_metric)
 
+    # If control just got disabled, clear button timers to avoid stale long-press state
+    if not enabled:
+      for k in self.button_timers:
+        self.button_timers[k] = 0
+        self.button_change_states[k] = {"standstill": False, "enabled": False}
+
     if CS.cruiseState.available:
       _enabled = self.update_enabled_state(CS, enabled)
       if not self.CP.pcmCruise or (not self.CP_SP.pcmCruiseSpeed and _enabled):

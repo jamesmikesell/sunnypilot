@@ -101,6 +101,9 @@ class VCruiseHelperSP:
         self.enabled_prev = not button_pressed
         enabled = False
       elif not enabled:
+        # Clear timers on disable to avoid stale button press state after re-enable
+        for k in self.enable_button_timers:
+          self.enable_button_timers[k] = 0
         self.enabled_prev = enabled
 
       return enabled and self.enabled_prev
