@@ -128,6 +128,11 @@ class TestVCruiseHelper:
       expected_v_cruise_kph = max(expected_v_cruise_kph, v_ego * CV.MS_TO_KPH)  # clip to min of vEgo
       expected_v_cruise_kph = float(np.clip(round(expected_v_cruise_kph, 1), V_CRUISE_MIN, V_CRUISE_MAX))
 
+      # Press then release to simulate a real button event sequence
+      CS = car.CarState(vEgo=float(v_ego), gasPressed=True, cruiseState={"available": True})
+      CS.buttonEvents = [ButtonEvent(type=ButtonType.decelCruise, pressed=True)]
+      self.v_cruise_helper.update_v_cruise(CS, enabled=True, is_metric=False)
+
       CS = car.CarState(vEgo=float(v_ego), gasPressed=True, cruiseState={"available": True})
       CS.buttonEvents = [ButtonEvent(type=ButtonType.decelCruise, pressed=False)]
       self.v_cruise_helper.update_v_cruise(CS, enabled=True, is_metric=False)
@@ -151,3 +156,48 @@ class TestVCruiseHelper:
           self.enable(float(v_ego), experimental_mode, dynamic_experimental_control)
           assert V_CRUISE_INITIAL <= self.v_cruise_helper.v_cruise_kph <= V_CRUISE_MAX
           assert self.v_cruise_helper.v_cruise_initialized
+
+  def test_clear_button_timers_on_disable(self):
+    """
+    Ensure accel/decel button timers are cleared when control is disabled.
+    This prevents stale long-press behavior after re-enable.
+    """
+    self.enable(V_CRUISE_INITIAL * CV.KPH_TO_MS, False, False)
+
+    # Start a button press to set timer
+    CS = car.CarState(cruiseState={"available": True})
+    CS.buttonEvents = [ButtonEvent(type=ButtonType.accelCruise, pressed=True)]
+    self.v_cruise_helper.update_v_cruise(CS, enabled=True, is_metric=False)
+    assert self.v_cruise_helper.button_timers[ButtonType.accelCruise] > 0
+
+    # Disable control; timers should clear
+    CS = car.CarState(cruiseState={"available": True})
+    self.v_cruise_helper.update_v_cruise(CS, enabled=False, is_metric=False)
+    assert all(v == 0 for v in self.v_cruise_helper.button_timers.values())
+
+    # Re-enable without any button events; cruise speed should not change
+    v_prev = self.v_cruise_helper.v_cruise_kph
+    CS = car.CarState(cruiseState={"available": True})
+    self.v_cruise_helper.update_v_cruise(CS, enabled=True, is_metric=False)
+    assert self.v_cruise_helper.v_cruise_kph == v_prev
+
+
+class TestVCruiseHelperEnableTimers:
+  def test_clear_enable_timers_on_disable(self):
+    """
+    Ensure enable button timers (for non pcmCruiseSpeed) are cleared on disable.
+    """
+    CP = car.CarParams(pcmCruise=False)
+    CP_SP = custom.CarParamsSP(pcmCruiseSpeed=False)
+    v_cruise_helper = VCruiseHelper(CP, CP_SP)
+
+    # Start a button press to set enable timer
+    CS = car.CarState(cruiseState={"available": True})
+    CS.buttonEvents = [ButtonEvent(type=ButtonType.decelCruise, pressed=True)]
+    v_cruise_helper.update_v_cruise(CS, enabled=True, is_metric=False)
+    assert any(v > 0 for v in v_cruise_helper.enable_button_timers.values())
+
+    # Disable control; enable timers should clear
+    CS = car.CarState(cruiseState={"available": True})
+    v_cruise_helper.update_v_cruise(CS, enabled=False, is_metric=False)
+    assert all(v == 0 for v in v_cruise_helper.enable_button_timers.values())
