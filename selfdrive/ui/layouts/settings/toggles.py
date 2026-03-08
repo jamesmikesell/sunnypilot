@@ -35,7 +35,30 @@ DESCRIPTIONS = {
   'RecordFront': tr_noop("Upload data from the driver facing camera and help improve the driver monitoring algorithm."),
   "IsMetric": tr_noop("Display speed in km/h instead of mph."),
   "RecordAudio": tr_noop("Record and store microphone audio while driving. The audio will be included in the dashcam video in comma connect."),
+  "IntelligentCruiseButtonManagement": tr_noop(
+    "When enabled, sunnypilot will attempt to manage the built-in cruise control buttons by emulating button presses for limited longitudinal control."
+  ),
+  "SmartCruiseControlVision": tr_noop("Use vision path predictions to estimate the appropriate speed to drive through turns ahead."),
+  "SmartCruiseControlMap": tr_noop("Use map data to estimate the appropriate speed to drive through turns ahead."),
+  "SpeedLimitMode": tr_noop("Configure Speed Limit Assist behavior."),
+  "SpeedLimitPolicy": tr_noop("Choose which source to use for speed limit data."),
 }
+
+SPEED_LIMIT_MODE_BUTTONS = [lambda: tr("Off"), lambda: tr("Info"), lambda: tr("Warning"), lambda: tr("Assist")]
+SPEED_LIMIT_POLICY_BUTTONS = [lambda: tr("Car Only"), lambda: tr("Map Only"), lambda: tr("Car First"), lambda: tr("Map First"), lambda: tr("Combined")]
+SPEED_LIMIT_MODE_DESCRIPTIONS = [
+  lambda: tr("Off: Disables the Speed Limit functions."),
+  lambda: tr("Information: Displays the current road's speed limit."),
+  lambda: tr("Warning: Provides a warning when exceeding the current road's speed limit."),
+  lambda: tr("Assist: Adjusts the vehicle's cruise speed based on the current road's speed limit when operating the +/- buttons."),
+]
+SPEED_LIMIT_POLICY_DESCRIPTIONS = [
+  lambda: tr("Car Only: Use Speed Limit data only from Car"),
+  lambda: tr("Map Only: Use Speed Limit data only from OpenStreetMaps"),
+  lambda: tr("Car First: Use Speed Limit data from Car if available, else use from OpenStreetMaps"),
+  lambda: tr("Map First: Use Speed Limit data from OpenStreetMaps if available, else use from Car"),
+  lambda: tr("Combined: Use combined Speed Limit data from Car & OpenStreetMaps"),
+]
 
 
 class TogglesLayout(Widget):
@@ -94,6 +117,24 @@ class TogglesLayout(Widget):
         "metric.png",
         False,
       ),
+      "IntelligentCruiseButtonManagement": (
+        lambda: tr("Intelligent Cruise Button Management (ICBM)"),
+        DESCRIPTIONS["IntelligentCruiseButtonManagement"],
+        "speed_limit.png",
+        False,
+      ),
+      "SmartCruiseControlVision": (
+        lambda: tr("Smart Cruise Control - Vision"),
+        DESCRIPTIONS["SmartCruiseControlVision"],
+        "speed_limit.png",
+        False,
+      ),
+      "SmartCruiseControlMap": (
+        lambda: tr("Smart Cruise Control - Map"),
+        DESCRIPTIONS["SmartCruiseControlMap"],
+        "speed_limit.png",
+        False,
+      ),
     }
 
     self._long_personality_setting = multiple_button_item(
@@ -104,6 +145,24 @@ class TogglesLayout(Widget):
       callback=self._set_longitudinal_personality,
       selected_index=self._params.get("LongitudinalPersonality", return_default=True),
       icon="speed_limit.png"
+    )
+    self._speed_limit_mode_setting = multiple_button_item(
+      lambda: tr("SLA Mode"),
+      self._get_speed_limit_mode_description,
+      buttons=SPEED_LIMIT_MODE_BUTTONS,
+      button_width=200,
+      callback=self._set_speed_limit_mode,
+      selected_index=self._params.get("SpeedLimitMode", return_default=True),
+      icon="speed_limit.png",
+    )
+    self._speed_limit_source_setting = multiple_button_item(
+      lambda: tr("SLA Source"),
+      self._get_speed_limit_policy_description,
+      buttons=SPEED_LIMIT_POLICY_BUTTONS,
+      button_width=260,
+      callback=self._set_speed_limit_policy,
+      selected_index=self._params.get("SpeedLimitPolicy", return_default=True),
+      icon="speed_limit.png",
     )
 
     self._toggles = {}
@@ -138,6 +197,8 @@ class TogglesLayout(Widget):
       # insert longitudinal personality after NDOG toggle
       if param == "DisengageOnAccelerator":
         self._toggles["LongitudinalPersonality"] = self._long_personality_setting
+        self._toggles["SpeedLimitMode"] = self._speed_limit_mode_setting
+        self._toggles["SpeedLimitPolicy"] = self._speed_limit_source_setting
 
     self._update_experimental_mode_icon()
     self._scroller = Scroller(list(self._toggles.values()), line_separator=True, spacing=0)
@@ -202,6 +263,8 @@ class TogglesLayout(Widget):
     # refresh toggles from params to mirror external changes
     for param in self._toggle_defs:
       self._toggles[param].action_item.set_state(self._params.get_bool(param))
+    self._speed_limit_mode_setting.action_item.set_selected_button(self._params.get("SpeedLimitMode", return_default=True))
+    self._speed_limit_source_setting.action_item.set_selected_button(self._params.get("SpeedLimitPolicy", return_default=True))
 
     # these toggles need restart, block while engaged
     for toggle_def in self._toggle_defs:
@@ -246,3 +309,19 @@ class TogglesLayout(Widget):
 
   def _set_longitudinal_personality(self, button_index: int):
     self._params.put("LongitudinalPersonality", button_index)
+
+  def _set_speed_limit_mode(self, button_index: int):
+    self._params.put("SpeedLimitMode", button_index)
+
+  def _set_speed_limit_policy(self, button_index: int):
+    self._params.put("SpeedLimitPolicy", button_index)
+
+  def _get_speed_limit_mode_description(self):
+    idx = self._params.get("SpeedLimitMode", return_default=True)
+    idx = max(0, min(idx, len(SPEED_LIMIT_MODE_DESCRIPTIONS) - 1))
+    return SPEED_LIMIT_MODE_DESCRIPTIONS[idx]()
+
+  def _get_speed_limit_policy_description(self):
+    idx = self._params.get("SpeedLimitPolicy", return_default=True)
+    idx = max(0, min(idx, len(SPEED_LIMIT_POLICY_DESCRIPTIONS) - 1))
+    return SPEED_LIMIT_POLICY_DESCRIPTIONS[idx]()
