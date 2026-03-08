@@ -2,6 +2,7 @@ from cereal import log
 
 from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.selfdrive.ui.mici.widgets.button import BigParamControl, BigMultiParamToggle
+from openpilot.selfdrive.ui.sunnypilot.mici.widgets.button import BigPolygonMultiParamToggle
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -15,6 +16,13 @@ class TogglesLayoutMici(NavScroller):
 
     self._personality_toggle = BigMultiParamToggle("driving personality", "LongitudinalPersonality", ["aggressive", "standard", "relaxed"])
     self._experimental_btn = BigParamControl("experimental mode", "ExperimentalMode")
+    self._speed_limit_mode_toggle = BigMultiParamToggle("sla mode", "SpeedLimitMode", ["off", "info", "warning", "assist"],
+                                                       select_callback=self._on_speed_limit_mode_changed)
+    self._speed_limit_source_toggle = BigPolygonMultiParamToggle("sla source", "SpeedLimitPolicy",
+                                                                 ["car only", "map only", "car first", "map first", "combined"])
+    icbm_toggle = BigParamControl("icbm", "IntelligentCruiseButtonManagement")
+    scc_vision_toggle = BigParamControl("smart cruise - vision", "SmartCruiseControlVision")
+    scc_map_toggle = BigParamControl("smart cruise - map", "SmartCruiseControlMap")
     is_metric_toggle = BigParamControl("use metric units", "IsMetric")
     ldw_toggle = BigParamControl("lane departure warnings", "IsLdwEnabled")
     always_on_dm_toggle = BigParamControl("always-on driver monitor", "AlwaysOnDM")
@@ -25,6 +33,11 @@ class TogglesLayoutMici(NavScroller):
     self._scroller.add_widgets([
       self._personality_toggle,
       self._experimental_btn,
+      icbm_toggle,
+      self._speed_limit_mode_toggle,
+      self._speed_limit_source_toggle,
+      scc_vision_toggle,
+      scc_map_toggle,
       is_metric_toggle,
       ldw_toggle,
       always_on_dm_toggle,
@@ -41,6 +54,9 @@ class TogglesLayoutMici(NavScroller):
       ("AlwaysOnDM", always_on_dm_toggle),
       ("RecordFront", record_front),
       ("RecordAudio", record_mic),
+      ("SmartCruiseControlMap", scc_map_toggle),
+      ("SmartCruiseControlVision", scc_vision_toggle),
+      ("IntelligentCruiseButtonManagement", icbm_toggle),
       ("OpenpilotEnabledToggle", enable_openpilot),
     )
 
@@ -67,6 +83,16 @@ class TogglesLayoutMici(NavScroller):
     super().show_event()
     self._update_toggles()
 
+  def _update_speed_limit_source_enabled(self, mode_idx: int | None = None):
+    if mode_idx is None:
+      mode_idx = ui_state.params.get("SpeedLimitMode", return_default=True)
+      mode_idx = max(0, min(mode_idx, len(self._speed_limit_mode_toggle._options) - 1))
+    self._speed_limit_source_toggle.set_enabled(mode_idx != 0)
+
+  def _on_speed_limit_mode_changed(self, value: str):
+    mode_idx = self._speed_limit_mode_toggle._options.index(value)
+    self._update_speed_limit_source_enabled(mode_idx)
+
   def _update_toggles(self):
     ui_state.update_params()
 
@@ -85,3 +111,12 @@ class TogglesLayoutMici(NavScroller):
     # Refresh toggles from params to mirror external changes
     for key, item in self._refresh_toggles:
       item.set_checked(ui_state.params.get_bool(key))
+
+    mode_idx = ui_state.params.get("SpeedLimitMode", return_default=True)
+    mode_idx = max(0, min(mode_idx, len(self._speed_limit_mode_toggle._options) - 1))
+    self._speed_limit_mode_toggle.set_value(self._speed_limit_mode_toggle._options[mode_idx])
+    self._update_speed_limit_source_enabled(mode_idx)
+
+    source_idx = ui_state.params.get("SpeedLimitPolicy", return_default=True)
+    source_idx = max(0, min(source_idx, len(self._speed_limit_source_toggle._options) - 1))
+    self._speed_limit_source_toggle.set_value(self._speed_limit_source_toggle._options[source_idx])
