@@ -7,10 +7,9 @@ See the LICENSE.md file in the root directory for more details.
 import cereal.messaging as messaging
 from cereal import log, car, custom
 from openpilot.common.constants import CV
+from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import SLA_DYNAMIC_OFFSET_LIMIT
 from openpilot.sunnypilot.selfdrive.selfdrived.events_base import EventsBase, Priority, ET, Alert, \
   NoEntryAlert, ImmediateDisableAlert, EngagementAlert, NormalPermanentAlert, AlertCallbackType, wrong_car_mode_alert
-from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import PCM_LONG_REQUIRED_MAX_SET_SPEED, CONFIRM_SPEED_THRESHOLD
-from openpilot.system.hardware import HARDWARE
 
 AlertSize = log.SelfdriveState.AlertSize
 AlertStatus = log.SelfdriveState.AlertStatus
@@ -23,7 +22,43 @@ EventNameSP = custom.OnroadEventSP.EventName
 # get event name from enum
 EVENT_NAME_SP = {v: k for k, v in EventNameSP.schema.enumerants.items()}
 
-IS_MICI = HARDWARE.get_device_type() == 'mici'
+def _get_limit_offset_text(sm: messaging.SubMaster, metric: bool) -> str:
+  speed_conv = CV.MS_TO_KPH if metric else CV.MS_TO_MPH
+
+  resolver = sm['longitudinalPlanSP'].speedLimit.resolver
+  assist = sm['longitudinalPlanSP'].speedLimit.assist
+  speed_limit = resolver.speedLimitFinalLast
+  v_target = assist.vTarget
+
+  if speed_limit <= 0.:
+    return "--"
+
+  speed_limit_conv = round(speed_limit * speed_conv)
+  if v_target <= 0.:
+    return f"{speed_limit_conv}"
+
+  offset_conv = round((v_target - speed_limit) * speed_conv)
+  if offset_conv == 0:
+    return f"{speed_limit_conv}"
+
+  sign = "+" if offset_conv > 0 else ""
+  return f"{speed_limit_conv} {sign}{offset_conv}"
+
+
+def speed_limit_active_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  return Alert(
+    f"SLA ON {_get_limit_offset_text(sm, metric)}",
+    "",
+    AlertStatus.normal, AlertSize.small,
+    Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleHigh, 3.)
+
+
+def speed_limit_changed_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
+  return Alert(
+    f"SLA {_get_limit_offset_text(sm, metric)}",
+    "",
+    AlertStatus.normal, AlertSize.small,
+    Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleHigh, 3.)
 
 
 def speed_limit_adjust_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
@@ -39,37 +74,28 @@ def speed_limit_adjust_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.
 
 def speed_limit_pre_active_alert(CP: car.CarParams, CS: car.CarState, sm: messaging.SubMaster, metric: bool, soft_disable_time: int, personality) -> Alert:
   speed_conv = CV.MS_TO_KPH if metric else CV.MS_TO_MPH
-  v_cruise_cluster = CS.vCruiseCluster
-  set_speed = sm['controlsState'].vCruiseDEPRECATED if v_cruise_cluster == 0.0 else v_cruise_cluster
-  set_speed_conv = round(set_speed * speed_conv)
+  max_offset = round(SLA_DYNAMIC_OFFSET_LIMIT[metric] * speed_conv)
 
-  speed_limit_final_last = sm['longitudinalPlanSP'].speedLimit.resolver.speedLimitFinalLast
-  speed_limit_final_last_conv = round(speed_limit_final_last * speed_conv)
-  alert_1_str = ""
-  alert_size = AlertSize.small
-
-  if CP.openpilotLongitudinalControl and CP.pcmCruise:
-    # PCM long
-    cst_low, cst_high = PCM_LONG_REQUIRED_MAX_SET_SPEED[metric]
-    pcm_long_required_max = cst_low if speed_limit_final_last_conv < CONFIRM_SPEED_THRESHOLD[metric] else cst_high
-    pcm_long_required_max_set_speed_conv = round(pcm_long_required_max * speed_conv)
-    speed_unit = "km/h" if metric else "mph"
-
-    alert_1_str = f"Speed Limit Assist: set to {pcm_long_required_max_set_speed_conv} {speed_unit} to engage"
+  speed_limit_valid = sm['longitudinalPlanSP'].speedLimit.resolver.speedLimitValid
+  if not speed_limit_valid:
+    alert_1_str = "SLA OFF no limit"
   else:
-    if IS_MICI:
-      if set_speed_conv < speed_limit_final_last_conv:
-        alert_1_str = "Press + to confirm speed limit"
-      elif set_speed_conv > speed_limit_final_last_conv:
-        alert_1_str = "Press - to confirm speed limit"
+    set_speed = CS.vCruiseCluster if CS.vCruiseCluster > 0. else sm['controlsState'].vCruiseDEPRECATED
+    speed_limit = sm['longitudinalPlanSP'].speedLimit.resolver.speedLimitFinalLast
+    speed_limit_conv = round(speed_limit * speed_conv)
+    requested_offset = round((set_speed - speed_limit) * speed_conv)
+
+    if abs(requested_offset) > max_offset:
+      sign = "+" if requested_offset >= 0 else "-"
+      alert_1_str = f"SLA OFF {speed_limit_conv} {sign}{abs(requested_offset)} exceeds {max_offset} offset limit"
     else:
-      alert_size = AlertSize.none
+      alert_1_str = "SLA OFF not engaged"
 
   return Alert(
     alert_1_str,
     "",
-    AlertStatus.normal, alert_size,
-    Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleLow, .1)
+    AlertStatus.normal, AlertSize.small,
+    Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleLow, 1.5)
 
 
 class EventsSP(EventsBase):
@@ -209,19 +235,11 @@ EVENTS_SP: dict[int, dict[str, Alert | AlertCallbackType]] = {
   },
 
   EventNameSP.speedLimitActive: {
-    ET.WARNING: Alert(
-      "Auto adjusting to speed limit",
-      "",
-      AlertStatus.normal, AlertSize.small,
-      Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleHigh, 5.),
+    ET.WARNING: speed_limit_active_alert,
   },
 
   EventNameSP.speedLimitChanged: {
-    ET.WARNING: Alert(
-      "Set speed changed",
-      "",
-      AlertStatus.normal, AlertSize.small,
-      Priority.LOW, VisualAlert.none, AudibleAlertSP.promptSingleHigh, 5.),
+    ET.WARNING: speed_limit_changed_alert,
   },
 
   EventNameSP.speedLimitPreActive: {

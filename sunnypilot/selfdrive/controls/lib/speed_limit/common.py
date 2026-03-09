@@ -16,12 +16,6 @@ class Policy(IntEnumBase):
   combined = 4
 
 
-class OffsetType(IntEnumBase):
-  off = 0
-  fixed = 1
-  percentage = 2
-
-
 class Mode(IntEnumBase):
   off = 0
   information = 1

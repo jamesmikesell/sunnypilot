@@ -156,6 +156,19 @@ class HudRenderer(Widget):
       max_color,
     )
 
+    sla_info_text = self._get_sla_info_text()
+    if sla_info_text is not None:
+      sla_info_font_size = 22
+      sla_info_width = measure_text_cached(self._font_semi_bold, sla_info_text, sla_info_font_size).x
+      rl.draw_text_ex(
+        self._font_semi_bold,
+        sla_info_text,
+        rl.Vector2(x + (set_speed_width - sla_info_width) / 2, y + 56),
+        sla_info_font_size,
+        0,
+        max_color,
+      )
+
     set_speed_text = CRUISE_DISABLED_CHAR if not self.is_cruise_set else str(round(self.set_speed))
     speed_text_width = measure_text_cached(self._font_bold, set_speed_text, FONT_SIZES.set_speed).x
     rl.draw_text_ex(
@@ -166,6 +179,25 @@ class HudRenderer(Widget):
       0,
       set_speed_color,
     )
+
+  def _get_sla_info_text(self) -> str | None:
+    lp_sp = ui_state.sm['longitudinalPlanSP']
+    assist = lp_sp.speedLimit.assist
+    if not assist.active:
+      return None
+
+    speed_conv = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
+    speed_limit = lp_sp.speedLimit.resolver.speedLimitFinalLast
+    if speed_limit <= 0.:
+      return None
+
+    speed_limit_conv = round(speed_limit * speed_conv)
+    offset_conv = round((assist.vTarget - speed_limit) * speed_conv)
+    if offset_conv == 0:
+      return f"{speed_limit_conv}"
+
+    sign = "+" if offset_conv > 0 else ""
+    return f"{speed_limit_conv} {sign}{offset_conv}"
 
   def _draw_current_speed(self, rect: rl.Rectangle) -> None:
     """Draw the current vehicle speed and unit."""

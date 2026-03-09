@@ -72,6 +72,24 @@ class HudRendererSP(HudRenderer):
 
     self.show_icbm_status = self.icbm_active_counter > 0
 
+  def _get_sla_info_text(self) -> str | None:
+    lp_sp = ui_state.sm['longitudinalPlanSP']
+    assist = lp_sp.speedLimit.assist
+    if not assist.active:
+      return None
+
+    speed_limit = lp_sp.speedLimit.resolver.speedLimitFinalLast
+    if speed_limit <= 0.:
+      return None
+
+    offset_conv = round((assist.vTarget - speed_limit) * self.speed_conv)
+    if offset_conv == 0:
+      return None
+
+    speed_limit_conv = round(speed_limit * self.speed_conv)
+    sign = "+" if offset_conv > 0 else ""
+    return f"{speed_limit_conv} {sign}{offset_conv}"
+
   def _draw_set_speed(self, rect: rl.Rectangle) -> None:
     long_plan_sp = ui_state.sm['longitudinalPlanSP']
     long_override = ui_state.sm['carControl'].cruiseControl.override
@@ -100,10 +118,23 @@ class HudRendererSP(HudRenderer):
         elif ui_state.status == UIStatus.OVERRIDE:
           max_color = COLORS.OVERRIDE
 
-    max_str_size = 60 if self.show_icbm_status else 40
-    max_str_y = 15 if self.show_icbm_status else 27
-
-    max_text = str(round(self.speed_cluster)) if self.show_icbm_status else tr("MAX")
+    sla_active = long_plan_sp.speedLimit.assist.active
+    sla_info_text = None
+    sla_info_font_size = 22
+    sla_info_y = 56
+    set_speed_y = 77
+    if sla_active:
+      max_text = tr("MAX")
+      max_str_size = FONT_SIZES.max_speed
+      max_str_y = 22
+      sla_info_font_size = int(round(22 * 1.5))
+      sla_info_y = 58
+      set_speed_y = 88
+      sla_info_text = self._get_sla_info_text()
+    else:
+      max_str_size = 60 if self.show_icbm_status else 40
+      max_str_y = 15 if self.show_icbm_status else 27
+      max_text = str(round(self.speed_cluster)) if self.show_icbm_status else tr("MAX")
     max_text_width = measure_text_cached(self._font_semi_bold, max_text, max_str_size).x
     rl.draw_text_ex(
       self._font_semi_bold,
@@ -114,12 +145,23 @@ class HudRendererSP(HudRenderer):
       max_color,
     )
 
+    if sla_info_text is not None:
+      sla_info_width = measure_text_cached(self._font_semi_bold, sla_info_text, sla_info_font_size).x
+      rl.draw_text_ex(
+        self._font_semi_bold,
+        sla_info_text,
+        rl.Vector2(x + (set_speed_width - sla_info_width) / 2, y + sla_info_y),
+        sla_info_font_size,
+        0,
+        max_color,
+      )
+
     set_speed_text = CRUISE_DISABLED_CHAR if not self.is_cruise_set else str(round(self.set_speed))
     speed_text_width = measure_text_cached(self._font_bold, set_speed_text, FONT_SIZES.set_speed).x
     rl.draw_text_ex(
       self._font_bold,
       set_speed_text,
-      rl.Vector2(x + (set_speed_width - speed_text_width) / 2, y + 77),
+      rl.Vector2(x + (set_speed_width - speed_text_width) / 2, y + set_speed_y),
       FONT_SIZES.set_speed,
       0,
       set_speed_color,

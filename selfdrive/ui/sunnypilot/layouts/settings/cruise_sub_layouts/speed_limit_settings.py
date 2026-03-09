@@ -11,16 +11,14 @@ import pyray as rl
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.cruise_sub_layouts.speed_limit_policy import SpeedLimitPolicyLayout
 from openpilot.selfdrive.ui.ui_state import ui_state
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode as SpeedLimitMode
-from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import OffsetType as SpeedLimitOffsetType
 from openpilot.system.ui.lib.multilang import tr
 from openpilot.system.ui.sunnypilot.widgets import get_highlighted_description
-from openpilot.system.ui.sunnypilot.widgets.list_view import multiple_button_item_sp, option_item_sp, simple_button_item_sp, LineSeparatorSP
+from openpilot.system.ui.sunnypilot.widgets.list_view import multiple_button_item_sp, simple_button_item_sp, LineSeparatorSP
 from openpilot.system.ui.widgets import Widget
 from openpilot.system.ui.widgets.network import NavButton
 from openpilot.system.ui.widgets.scroller_tici import Scroller
 
 SPEED_LIMIT_MODE_BUTTONS = [tr("Off"), tr("Info"), tr("Warning"), tr("Assist")]
-SPEED_LIMIT_OFFSET_TYPE_BUTTONS = [tr("None"), tr("Fixed"), tr("%")]
 
 SPEED_LIMIT_MODE_DESCRIPTIONS = [
   tr("Off: Disables the Speed Limit functions."),
@@ -28,13 +26,6 @@ SPEED_LIMIT_MODE_DESCRIPTIONS = [
   tr("Warning: Provides a warning when exceeding the current road's speed limit."),
   tr("Assist: Adjusts the vehicle's cruise speed based on the current road's speed limit when operating the +/- buttons."),
 ]
-
-SPEED_LIMIT_OFFSET_DESCRIPTIONS = [
-  tr("None: No Offset"),
-  tr("Fixed: Adds a fixed offset [Speed Limit + Offset]"),
-  tr("Percent: Adds a percent offset [Speed Limit + (Offset % Speed Limit)]"),
-]
-
 
 class PanelType(IntEnum):
   SETTINGS = 0
@@ -69,30 +60,11 @@ class SpeedLimitSettingsLayout(Widget):
       callback=lambda: self._set_current_panel(PanelType.POLICY)
     )
 
-    self._speed_limit_offset_type = multiple_button_item_sp(
-      title=lambda: tr("Speed Limit Offset"),
-      description="",
-      buttons=SPEED_LIMIT_OFFSET_TYPE_BUTTONS,
-      param="SpeedLimitOffsetType",
-      button_width=450,
-    )
-
-    self._speed_limit_value_offset = option_item_sp(
-      title="",
-      param="SpeedLimitValueOffset",
-      min_value=-30,
-      max_value=30,
-      description=self._get_offset_description,
-      label_callback=self._get_offset_label,
-    )
-
     items = [
       self._speed_limit_mode,
       LineSeparatorSP(40),
       self._source_button,
       LineSeparatorSP(40),
-      self._speed_limit_offset_type,
-      self._speed_limit_value_offset
     ]
     return items
 
@@ -104,21 +76,6 @@ class SpeedLimitSettingsLayout(Widget):
   @staticmethod
   def _get_mode_description():
     return get_highlighted_description(ui_state.params, "SpeedLimitMode", SPEED_LIMIT_MODE_DESCRIPTIONS)
-
-  @staticmethod
-  def _get_offset_description():
-    return get_highlighted_description(ui_state.params, "SpeedLimitOffsetType", SPEED_LIMIT_OFFSET_DESCRIPTIONS)
-
-  @staticmethod
-  def _get_offset_label(value):
-    offset_type = int(ui_state.params.get("SpeedLimitOffsetType", return_default=True))
-    unit = tr("km/h") if ui_state.is_metric else tr("mph")
-
-    if offset_type == int(SpeedLimitOffsetType.percentage):
-      return f"{value}%"
-    elif offset_type == int(SpeedLimitOffsetType.fixed):
-      return f"{value} {unit}"
-    return str(value)
 
   def _update_state(self):
     super()._update_state()
@@ -153,9 +110,6 @@ class SpeedLimitSettingsLayout(Widget):
       })
     else:
       self._speed_limit_mode.action_item.set_enabled_buttons(None)
-
-    offset_type = ui_state.params.get("SpeedLimitOffsetType", return_default=True)
-    self._speed_limit_value_offset.set_visible(offset_type != int(SpeedLimitOffsetType.off))
 
   def _render(self, rect):
     if self._current_panel == PanelType.POLICY:

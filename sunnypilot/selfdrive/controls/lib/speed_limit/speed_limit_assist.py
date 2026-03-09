@@ -14,7 +14,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.sunnypilot import PARAMS_UPDATE_PERIOD
 from openpilot.sunnypilot.selfdrive.selfdrived.events import EventsSP
-from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import PCM_LONG_REQUIRED_MAX_SET_SPEED, CONFIRM_SPEED_THRESHOLD
+from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit import PCM_LONG_REQUIRED_MAX_SET_SPEED, CONFIRM_SPEED_THRESHOLD, SLA_DYNAMIC_OFFSET_LIMIT
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.common import Mode
 from openpilot.sunnypilot.selfdrive.controls.lib.speed_limit.helpers import compare_cluster_target, set_speed_limit_assist_availability
 
@@ -43,6 +43,9 @@ V_CRUISE_UNSET = 255.
 CRUISE_BUTTONS_PLUS = (ButtonType.accelCruise, ButtonType.resumeCruise)
 CRUISE_BUTTONS_MINUS = (ButtonType.decelCruise, ButtonType.setCruise)
 CRUISE_BUTTON_CONFIRM_HOLD = 0.5  # secs.
+COMBO_SEQUENCE = ("plus", "plus", "minus", "minus")
+COMBO_MAX_WINDOW = 2.0  # secs.
+DRIVER_SET_SPEED_CHANGE_WINDOW = 1.0  # secs.
 
 
 class SpeedLimitAssist:
@@ -91,6 +94,12 @@ class SpeedLimitAssist:
     self._plus_hold = 0.
     self._minus_hold = 0.
     self._last_carstate_ts = 0.
+    self._combo_start_ts = 0.
+    self._combo_progress = 0
+    self._combo_completed = False
+    self._combo_failed_no_speed_limit = False
+    self._last_set_speed_button_ts = 0.
+    self.dynamic_offset = 0.
 
     # TODO-SP: SLA's own output_a_target for planner
     # Solution functions mapped to respective states
@@ -120,17 +129,11 @@ class SpeedLimitAssist:
     return bool(self.v_cruise_cluster_conv < CONFIRM_SPEED_THRESHOLD[self.is_metric])
 
   def update_active_event(self, events_sp: EventsSP) -> None:
-    if self.v_cruise_cluster_below_confirm_speed_threshold:
-      events_sp.add(EventNameSP.speedLimitChanged)
-    else:
-      events_sp.add(EventNameSP.speedLimitActive)
+    events_sp.add(EventNameSP.speedLimitActive)
 
   def get_v_target_from_control(self) -> float:
-    if self._has_speed_limit:
-      if self.pcm_op_long and self.is_enabled:
-        return self._speed_limit_final_last
-      if not self.pcm_op_long and self.is_active:
-        return self._speed_limit_final_last
+    if self._has_speed_limit and self.is_active:
+      return self._get_non_pcm_target_speed()
 
     # Fallback
     return V_CRUISE_UNSET
@@ -151,10 +154,60 @@ class SpeedLimitAssist:
 
     for b in CS.buttonEvents:
       if not b.pressed:
+        self._update_combo_progress(b.type, now)
         if b.type in CRUISE_BUTTONS_PLUS:
           self._plus_hold = max(self._plus_hold, now + CRUISE_BUTTON_CONFIRM_HOLD)
         elif b.type in CRUISE_BUTTONS_MINUS:
           self._minus_hold = max(self._minus_hold, now + CRUISE_BUTTON_CONFIRM_HOLD)
+
+        if self.long_enabled and self.enabled and (b.type in CRUISE_BUTTONS_PLUS or b.type in CRUISE_BUTTONS_MINUS):
+          self._last_set_speed_button_ts = now
+
+  def _reset_combo_progress(self) -> None:
+    self._combo_start_ts = 0.
+    self._combo_progress = 0
+
+  def _button_direction(self, button_type: car.CarState.ButtonEvent.Type) -> str | None:
+    if button_type in CRUISE_BUTTONS_PLUS:
+      return "plus"
+    if button_type in CRUISE_BUTTONS_MINUS:
+      return "minus"
+    return None
+
+  def _update_combo_progress(self, button_type: car.CarState.ButtonEvent.Type, now: float) -> None:
+    if not self.long_enabled or not self.enabled:
+      return
+
+    direction = self._button_direction(button_type)
+    if direction is None:
+      return
+
+    expected = COMBO_SEQUENCE[self._combo_progress] if self._combo_progress < len(COMBO_SEQUENCE) else None
+    timed_out = self._combo_progress > 0 and (now - self._combo_start_ts > COMBO_MAX_WINDOW)
+
+    if timed_out:
+      self._reset_combo_progress()
+      expected = COMBO_SEQUENCE[0]
+
+    if self._combo_progress == 0:
+      if direction == COMBO_SEQUENCE[0]:
+        self._combo_start_ts = now
+        self._combo_progress = 1
+      return
+
+    if direction == expected:
+      self._combo_progress += 1
+    else:
+      self._reset_combo_progress()
+      if direction == COMBO_SEQUENCE[0]:
+        self._combo_start_ts = now
+        self._combo_progress = 1
+      return
+
+    if self._combo_progress == len(COMBO_SEQUENCE):
+      if now - self._combo_start_ts <= COMBO_MAX_WINDOW:
+        self._combo_completed = True
+      self._reset_combo_progress()
 
   def _get_button_release(self, req_plus: bool, req_minus: bool) -> bool:
     now = time.monotonic()
@@ -177,7 +230,7 @@ class SpeedLimitAssist:
     self.v_cruise_cluster = v_cruise_cluster
 
     # Update current velocity offset (error)
-    self.v_offset = self._speed_limit_final_last - self.v_ego
+    self.v_offset = self.get_v_target_from_control() - self.v_ego if self.is_active else self._speed_limit_final_last - self.v_ego
 
     self.speed_limit_final_last_conv = round(self._speed_limit_final_last * speed_conv)
     self.v_cruise_cluster_conv = round(self.v_cruise_cluster * speed_conv)
@@ -214,12 +267,40 @@ class SpeedLimitAssist:
 
   def _update_confirmed_state(self):
     if self._has_speed_limit:
+      v_target = self._get_non_pcm_target_speed()
+      self.v_offset = v_target - self.v_ego
       if self.v_offset < LIMIT_SPEED_OFFSET_TH:
         self.state = SpeedLimitAssistState.adapting
       else:
         self.state = SpeedLimitAssistState.active
     else:
       self.state = SpeedLimitAssistState.pending
+
+  def _get_dynamic_offset_limit(self) -> float:
+    return SLA_DYNAMIC_OFFSET_LIMIT[self.is_metric]
+
+  def _get_non_pcm_target_speed(self) -> float:
+    if not self._has_speed_limit:
+      return 0.
+    return max(0., self._speed_limit_final_last + self.dynamic_offset)
+
+  def _set_dynamic_offset_from_set_speed(self, base_speed_limit: float) -> bool:
+    if base_speed_limit <= 0.:
+      return False
+    requested_offset = self.v_cruise_cluster - base_speed_limit
+    if abs(requested_offset) > self._get_dynamic_offset_limit():
+      self.dynamic_offset = 0.
+      return False
+    self.dynamic_offset = requested_offset
+    return True
+
+  def _consume_recent_driver_set_speed_change(self) -> bool:
+    now = time.monotonic()
+    is_recent = self._last_set_speed_button_ts > 0. and (now - self._last_set_speed_button_ts) <= DRIVER_SET_SPEED_CHANGE_WINDOW
+    if is_recent:
+      self._last_set_speed_button_ts = 0.
+      return True
+    return False
 
   def _update_non_pcm_long_confirmed_state(self) -> bool:
     if self.target_set_speed_confirmed:
@@ -233,126 +314,44 @@ class SpeedLimitAssist:
     return self._get_button_release(req_plus, req_minus)
 
   def update_state_machine_pcm_op_long(self):
-    self.long_engaged_timer = max(0, self.long_engaged_timer - 1)
-    self.pre_active_timer = max(0, self.pre_active_timer - 1)
-
-    # ACTIVE, ADAPTING, PENDING, PRE_ACTIVE, INACTIVE
-    if self.state != SpeedLimitAssistState.disabled:
-      if not self.long_enabled or not self.enabled:
-        self.state = SpeedLimitAssistState.disabled
-
-      else:
-        # ACTIVE
-        if self.state == SpeedLimitAssistState.active:
-          if self.v_cruise_cluster_changed:
-            self.state = SpeedLimitAssistState.inactive
-          elif self.speed_limit_changed and self.apply_confirm_speed_threshold:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
-          elif self._has_speed_limit and self.v_offset < LIMIT_SPEED_OFFSET_TH:
-            self.state = SpeedLimitAssistState.adapting
-
-        # ADAPTING
-        elif self.state == SpeedLimitAssistState.adapting:
-          if self.v_cruise_cluster_changed:
-            self.state = SpeedLimitAssistState.inactive
-          elif self.speed_limit_changed and self.apply_confirm_speed_threshold:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
-          elif self.v_offset >= LIMIT_SPEED_OFFSET_TH:
-            self.state = SpeedLimitAssistState.active
-
-        # PENDING
-        elif self.state == SpeedLimitAssistState.pending:
-          if self.target_set_speed_confirmed:
-            self._update_confirmed_state()
-          elif self.speed_limit_changed:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
-
-        # PRE_ACTIVE
-        elif self.state == SpeedLimitAssistState.preActive:
-          if self.target_set_speed_confirmed:
-            self._update_confirmed_state()
-          elif self.pre_active_timer <= 0:
-            # Timeout - session ended
-            self.state = SpeedLimitAssistState.inactive
-
-        # INACTIVE
-        elif self.state == SpeedLimitAssistState.inactive:
-          pass
-
-    # DISABLED
-    elif self.state == SpeedLimitAssistState.disabled:
-      if self.long_enabled and self.enabled:
-        # start or reset preActive timer if initially enabled or manual set speed change detected
-        if not self.long_enabled_prev or self.v_cruise_cluster_changed:
-          self.long_engaged_timer = int(DISABLED_GUARD_PERIOD / DT_MDL)
-
-        elif self.long_engaged_timer <= 0:
-          if self.target_set_speed_confirmed:
-            self._update_confirmed_state()
-          elif self._has_speed_limit:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
-          else:
-            self.state = SpeedLimitAssistState.pending
-
-    enabled = self.state in ENABLED_STATES
-    active = self.state in ACTIVE_STATES
-
-    return enabled, active
+    # PCM now follows the same SLA engagement/disengagement and dynamic-offset behavior as non-PCM.
+    return self.update_state_machine_non_pcm_long()
 
   def update_state_machine_non_pcm_long(self):
-    self.long_engaged_timer = max(0, self.long_engaged_timer - 1)
-    self.pre_active_timer = max(0, self.pre_active_timer - 1)
+    self._combo_failed_no_speed_limit = False
 
-    # ACTIVE, ADAPTING, PENDING, PRE_ACTIVE, INACTIVE
-    if self.state != SpeedLimitAssistState.disabled:
-      if not self.long_enabled or not self.enabled:
-        self.state = SpeedLimitAssistState.disabled
+    if not self.long_enabled or not self.enabled:
+      self.state = SpeedLimitAssistState.disabled
+      self.dynamic_offset = 0.
+      self._reset_combo_progress()
+      self._combo_completed = False
+    else:
+      if not self.long_enabled_prev:
+        # Always disengage SLA on each cruise-control engagement.
+        self.state = SpeedLimitAssistState.inactive
+        self.dynamic_offset = 0.
+        self._reset_combo_progress()
+        self._combo_completed = False
 
-      else:
-        # ACTIVE
-        if self.state == SpeedLimitAssistState.active:
-          if self.v_cruise_cluster_changed:
+      if self._combo_completed:
+        self._combo_completed = False
+        if self._speed_limit > 0. and self._set_dynamic_offset_from_set_speed(self._speed_limit):
+          self._update_confirmed_state()
+        else:
+          self.state = SpeedLimitAssistState.inactive
+          self._combo_failed_no_speed_limit = self._speed_limit <= 0.
+
+      elif self.state in ACTIVE_STATES:
+        # Recompute dynamic offset whenever driver set speed changes while SLA is engaged.
+        if self.v_cruise_cluster_changed and self._consume_recent_driver_set_speed_change():
+          if not self._set_dynamic_offset_from_set_speed(self._speed_limit_final_last):
             self.state = SpeedLimitAssistState.inactive
-
-          elif self.speed_limit_changed and self.apply_confirm_speed_threshold:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
-
-        # PRE_ACTIVE
-        elif self.state == SpeedLimitAssistState.preActive:
-          if self._update_non_pcm_long_confirmed_state():
-            self.state = SpeedLimitAssistState.active
-          elif self.pre_active_timer <= 0:
-            # Timeout - session ended
-            self.state = SpeedLimitAssistState.inactive
-
-        # INACTIVE
-        elif self.state == SpeedLimitAssistState.inactive:
-          if self.speed_limit_changed:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
-          elif self._update_non_pcm_long_confirmed_state():
-            self.state = SpeedLimitAssistState.active
-
-    # DISABLED
-    elif self.state == SpeedLimitAssistState.disabled:
-      if self.long_enabled and self.enabled:
-        # start or reset preActive timer if initially enabled or manual set speed change detected
-        if not self.long_enabled_prev or self.v_cruise_cluster_changed:
-          self.long_engaged_timer = int(DISABLED_GUARD_PERIOD / DT_MDL)
-
-        elif self.long_engaged_timer <= 0:
-          if self._update_non_pcm_long_confirmed_state():
-            self.state = SpeedLimitAssistState.active
-          elif self._has_speed_limit:
-            self.state = SpeedLimitAssistState.preActive
-            self.pre_active_timer = int(PRE_ACTIVE_GUARD_PERIOD[self.pcm_op_long] / DT_MDL)
           else:
-            self.state = SpeedLimitAssistState.inactive
+            self._update_confirmed_state()
+        else:
+          self._update_confirmed_state()
+      else:
+        self.state = SpeedLimitAssistState.inactive
 
     enabled = self.state in ENABLED_STATES
     active = self.state in ACTIVE_STATES
@@ -360,6 +359,9 @@ class SpeedLimitAssist:
     return enabled, active
 
   def update_events(self, events_sp: EventsSP) -> None:
+    if self._combo_failed_no_speed_limit:
+      events_sp.add(EventNameSP.speedLimitPreActive)
+
     if self.state == SpeedLimitAssistState.preActive:
       events_sp.add(EventNameSP.speedLimitPreActive)
 
@@ -368,15 +370,10 @@ class SpeedLimitAssist:
 
     if self.is_active:
       if self._state_prev not in ACTIVE_STATES:
-        self.update_active_event(events_sp)
-
-      # only notify if we acquire a valid speed limit
-      # do not check has_speed_limit here
-      elif self._speed_limit != self.speed_limit_prev:
-        if self.speed_limit_prev <= 0:
-          self.update_active_event(events_sp)
-        elif self.speed_limit_prev > 0 and self._speed_limit > 0:
-          self.update_active_event(events_sp)
+        events_sp.add(EventNameSP.speedLimitActive)
+      elif self._speed_limit != self.speed_limit_prev and self._speed_limit > 0:
+        # Always notify (and chime) when an updated speed limit is detected while SLA is active.
+        events_sp.add(EventNameSP.speedLimitChanged)
 
   def update(self, long_enabled: bool, long_override: bool, v_ego: float, a_ego: float, v_cruise_cluster: float, speed_limit: float,
              speed_limit_final_last: float, has_speed_limit: bool, distance: float, events_sp: EventsSP) -> None:

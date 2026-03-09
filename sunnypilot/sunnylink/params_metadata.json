@@ -1180,24 +1180,6 @@
       }
     ]
   },
-  "SpeedLimitOffsetType": {
-    "title": "Speed Limit Offset Type",
-    "description": "",
-    "options": [
-      {
-        "value": 0,
-        "label": "Off"
-      },
-      {
-        "value": 1,
-        "label": "Fixed"
-      },
-      {
-        "value": 2,
-        "label": "Percentage"
-      }
-    ]
-  },
   "SpeedLimitPolicy": {
     "title": "Speed Limit Source",
     "description": "",
@@ -1223,13 +1205,6 @@
         "label": "Combined"
       }
     ]
-  },
-  "SpeedLimitValueOffset": {
-    "title": "Speed Limit Offset Value",
-    "description": "",
-    "min": -30,
-    "max": 30,
-    "step": 1
   },
   "SshEnabled": {
     "title": "Enable SSH",
