@@ -256,14 +256,48 @@ class HudRenderer(Widget):
     )
 
     max_text = tr("MAX")
+    max_font_size = FONT_SIZES.max_speed
+    max_text_x = x + 25
+    max_text_y = y + FONT_SIZES.set_speed - 7 + 4
     rl.draw_text_ex(
       self._font_semi_bold,
       max_text,
-      rl.Vector2(x + 25, y + FONT_SIZES.set_speed - 7 + 4),
-      FONT_SIZES.max_speed,
+      rl.Vector2(max_text_x, max_text_y),
+      max_font_size,
       0,
       max_color,
     )
+
+    sla_info_text = self._get_sla_info_text()
+    if sla_info_text is not None:
+      sla_info_font_size = 33
+      rl.draw_text_ex(
+        self._font_semi_bold,
+        sla_info_text,
+        rl.Vector2(max_text_x, max_text_y + 26),
+        sla_info_font_size,
+        0,
+        max_color,
+      )
+
+  def _get_sla_info_text(self) -> str | None:
+    lp_sp = ui_state.sm['longitudinalPlanSP']
+    assist = lp_sp.speedLimit.assist
+    if not assist.active:
+      return None
+
+    speed_conv = CV.MS_TO_KPH if ui_state.is_metric else CV.MS_TO_MPH
+    speed_limit = lp_sp.speedLimit.resolver.speedLimitFinalLast
+    if speed_limit <= 0.:
+      return None
+
+    speed_limit_conv = round(speed_limit * speed_conv)
+    offset_conv = round((assist.vTarget - speed_limit) * speed_conv)
+    if offset_conv == 0:
+      return f"{speed_limit_conv}"
+
+    sign = "+" if offset_conv > 0 else ""
+    return f"{speed_limit_conv} {sign}{offset_conv}"
 
   def _draw_current_speed(self, rect: rl.Rectangle) -> None:
     """Draw the current vehicle speed and unit."""

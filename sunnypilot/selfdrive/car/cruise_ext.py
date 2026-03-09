@@ -109,8 +109,9 @@ class VCruiseHelperSP:
 
   def update_speed_limit_assist(self, is_metric, LP_SP: custom.LongitudinalPlanSP) -> None:
     resolver = LP_SP.speedLimit.resolver
+    assist = LP_SP.speedLimit.assist
     self.has_speed_limit = resolver.speedLimitValid or resolver.speedLimitLastValid
-    self.speed_limit_final_last = LP_SP.speedLimit.resolver.speedLimitFinalLast
+    self.speed_limit_final_last = assist.vTarget if assist.vTarget > 0 else resolver.speedLimitFinalLast
     self.speed_limit_final_last_kph = self.speed_limit_final_last * CV.MS_TO_KPH
     self.sla_state = LP_SP.speedLimit.assist.state
     self.req_plus, self.req_minus = compare_cluster_target(self.v_cruise_cluster_kph * CV.KPH_TO_MS,
