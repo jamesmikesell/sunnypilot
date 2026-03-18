@@ -8,6 +8,7 @@ See the LICENSE.md file in the root directory for more details.
 from cereal import car, custom
 from opendbc.car import structs
 from openpilot.common.params import Params
+from openpilot.sunnypilot.selfdrive.car.longitudinal import has_longitudinal_planner_ownership
 
 ButtonType = car.CarState.ButtonEvent.Type
 EventNameSP = custom.OnroadEventSP.EventName
@@ -16,8 +17,9 @@ DISTANCE_LONG_PRESS = 50
 
 
 class CruiseHelper:
-  def __init__(self, CP: structs.CarParams):
+  def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP | None = None):
     self.CP = CP
+    self.CP_SP = CP_SP if CP_SP is not None else custom.CarParamsSP()
     self.params = Params()
 
     self.button_frame_counts = {ButtonType.gapAdjustCruise: 0}
@@ -25,7 +27,7 @@ class CruiseHelper:
     self.experimental_mode_switched = False
 
   def update(self, CS, events, experimental_mode) -> None:
-    if self.CP.openpilotLongitudinalControl:
+    if has_longitudinal_planner_ownership(self.CP, self.CP_SP, self.params):
       if CS.cruiseState.available:
         self.update_button_frame_counts(CS)
 

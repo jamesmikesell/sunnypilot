@@ -7,6 +7,7 @@ from openpilot.system.ui.widgets.confirm_dialog import ConfirmDialog
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.system.ui.lib.multilang import tr, tr_noop
 from openpilot.system.ui.widgets import DialogResult
+from openpilot.sunnypilot.selfdrive.car.longitudinal import ICBM_OPENPILOT_LONGITUDINAL
 from openpilot.selfdrive.ui.ui_state import ui_state
 
 if gui_app.sunnypilot_ui():
@@ -37,6 +38,9 @@ DESCRIPTIONS = {
   "RecordAudio": tr_noop("Record and store microphone audio while driving. The audio will be included in the dashcam video in comma connect."),
   "IntelligentCruiseButtonManagement": tr_noop(
     "When enabled, sunnypilot will attempt to manage the built-in cruise control buttons by emulating button presses for limited longitudinal control."
+  ),
+  ICBM_OPENPILOT_LONGITUDINAL: tr_noop(
+    "When enabled, ICBM will follow openpilot longitudinal's computed target speed while stock ACC continues controlling gas and brakes."
   ),
   "SmartCruiseControlVision": tr_noop("Use vision path predictions to estimate the appropriate speed to drive through turns ahead."),
   "SmartCruiseControlMap": tr_noop("Use map data to estimate the appropriate speed to drive through turns ahead."),
@@ -121,6 +125,12 @@ class TogglesLayout(Widget):
         lambda: tr("Intelligent Cruise Button Management (ICBM)"),
         DESCRIPTIONS["IntelligentCruiseButtonManagement"],
         "speed_limit.png",
+        False,
+      ),
+      ICBM_OPENPILOT_LONGITUDINAL: (
+        lambda: tr("Use Openpilot Longitudinal Targets"),
+        DESCRIPTIONS[ICBM_OPENPILOT_LONGITUDINAL],
+        "experimental_white.png",
         False,
       ),
       "SmartCruiseControlVision": (
@@ -233,7 +243,7 @@ class TogglesLayout(Widget):
     )
 
     if ui_state.CP is not None:
-      if ui_state.has_longitudinal_control:
+      if ui_state.has_longitudinal_control or ui_state.has_icbm_openpilot_long:
         self._toggles["ExperimentalMode"].action_item.set_enabled(True)
         self._toggles["ExperimentalMode"].set_description(e2e_description)
         self._long_personality_setting.action_item.set_enabled(True)
@@ -257,6 +267,15 @@ class TogglesLayout(Widget):
         self._toggles["ExperimentalMode"].set_description("<b>" + long_desc + "</b><br><br>" + e2e_description)
     else:
       self._toggles["ExperimentalMode"].set_description(e2e_description)
+
+    icbm_op_long_toggle = self._toggles[ICBM_OPENPILOT_LONGITUDINAL]
+    icbm_op_long_available = ui_state.CP is not None and ui_state.CP_SP is not None and \
+                             ui_state.CP_SP.intelligentCruiseButtonManagementAvailable and not ui_state.has_longitudinal_control
+    icbm_op_long_toggle.set_visible(icbm_op_long_available)
+    if icbm_op_long_available:
+      icbm_op_long_toggle.action_item.set_enabled(ui_state.params.get_bool("IntelligentCruiseButtonManagement"))
+    else:
+      self._params.remove(ICBM_OPENPILOT_LONGITUDINAL)
 
     self._update_experimental_mode_icon()
 

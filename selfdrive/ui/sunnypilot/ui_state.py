@@ -8,6 +8,7 @@ from enum import Enum
 
 from cereal import messaging, log, car, custom
 from openpilot.common.params import Params
+from openpilot.sunnypilot.selfdrive.car.longitudinal import ICBM_OPENPILOT_LONGITUDINAL
 from openpilot.selfdrive.ui.sunnypilot.layouts.settings.display import OnroadBrightness
 from openpilot.sunnypilot.sunnylink.sunnylink_state import SunnylinkState
 from openpilot.system.ui.lib.application import gui_app
@@ -40,6 +41,7 @@ class UIStateSP:
     self.onroad_brightness_timer: int = 0
     self.custom_interactive_timeout: int = 0
     self._sp_initialized: bool = False
+    self.has_icbm_openpilot_long: bool = False
 
   def update(self) -> None:
     if self.sunnylink_enabled:
@@ -126,7 +128,7 @@ class UIStateSP:
     if CP_SP_bytes is not None:
       self.CP_SP = messaging.log_from_bytes(CP_SP_bytes, custom.CarParamsSP)
       self.has_icbm = self.CP_SP.intelligentCruiseButtonManagementAvailable and self.params.get_bool("IntelligentCruiseButtonManagement")
-
+      self.has_icbm_openpilot_long = self.has_icbm and self.params.get_bool(ICBM_OPENPILOT_LONGITUDINAL)
     self._enforce_constraints()
     self.active_bundle = self.params.get("ModelManager_ActiveBundle")
     self.blindspot = self.params.get_bool("BlindSpot")

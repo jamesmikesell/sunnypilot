@@ -7,6 +7,7 @@ from opendbc.car.interfaces import ACCEL_MIN, ACCEL_MAX
 from openpilot.common.constants import CV
 from openpilot.common.filter_simple import FirstOrderFilter
 from openpilot.common.realtime import DT_MDL
+from openpilot.common.params import Params
 from openpilot.selfdrive.modeld.constants import ModelConstants
 from openpilot.selfdrive.controls.lib.longcontrol import LongCtrlState
 from openpilot.selfdrive.controls.lib.longitudinal_mpc_lib.long_mpc import LongitudinalMpc, LongitudinalPlanSource
@@ -15,6 +16,7 @@ from openpilot.selfdrive.controls.lib.drive_helpers import CONTROL_N, get_accel_
 from openpilot.selfdrive.car.cruise import V_CRUISE_MAX, V_CRUISE_UNSET
 from openpilot.common.swaglog import cloudlog
 
+from openpilot.sunnypilot.selfdrive.car.longitudinal import is_icbm_openpilot_longitudinal_enabled
 from openpilot.sunnypilot.selfdrive.controls.lib.longitudinal_planner import LongitudinalPlannerSP
 
 A_CRUISE_MAX_VALS = [1.6, 1.2, 0.8, 0.6]
@@ -50,6 +52,7 @@ def limit_accel_in_turns(v_ego, angle_steers, a_target, CP):
 class LongitudinalPlanner(LongitudinalPlannerSP):
   def __init__(self, CP, CP_SP, init_v=0.0, init_a=0.0, dt=DT_MDL):
     self.CP = CP
+    self.params = Params()
     self.mpc = LongitudinalMpc(dt=dt)
     LongitudinalPlannerSP.__init__(self, self.CP, CP_SP, self.mpc)
     self.fcw = False
@@ -65,6 +68,13 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     self.v_desired_trajectory = np.zeros(CONTROL_N)
     self.a_desired_trajectory = np.zeros(CONTROL_N)
     self.j_desired_trajectory = np.zeros(CONTROL_N)
+
+  @staticmethod
+  def get_icbm_op_long_target(v_trajectory, target_speed, should_stop):
+    if should_stop:
+      return 0.0
+
+    return float(max(0.0, float(target_speed)))
 
   @staticmethod
   def parse_model(model_msg):
@@ -200,3 +210,11 @@ class LongitudinalPlanner(LongitudinalPlannerSP):
     pm.send('longitudinalPlan', plan_send)
 
     self.publish_longitudinal_plan_sp(sm, pm)
+
+  def get_icbm_v_target(self, sm):
+    if not is_icbm_openpilot_longitudinal_enabled(self.CP, self.CP_SP, self.params):
+      return LongitudinalPlannerSP.get_icbm_v_target(self, sm)
+
+    action_t = self.CP.longitudinalActuatorDelay + DT_MDL
+    target_speed = np.interp(action_t, CONTROL_N_T_IDX, self.v_desired_trajectory)
+    return self.get_icbm_op_long_target(self.v_desired_trajectory, target_speed, self.output_should_stop)

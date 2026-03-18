@@ -400,6 +400,10 @@
     "title": "Intelligent Cruise Button Management",
     "description": ""
   },
+  "ICBMOpenpilotLongitudinal": {
+    "title": "ICBM Openpilot Longitudinal",
+    "description": "Use openpilot longitudinal's computed target speed as the ICBM set-speed target while stock ACC continues controlling gas and brakes."
+  },
   "InteractivityTimeout": {
     "title": "Interactivity Timeout",
     "description": "Apply a custom timeout for settings UI. This is the time after which settings UI closes automatically if user is not interacting with the screen.",

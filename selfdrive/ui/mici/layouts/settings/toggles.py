@@ -3,6 +3,7 @@ from cereal import log
 from openpilot.system.ui.widgets.scroller import NavScroller
 from openpilot.selfdrive.ui.mici.widgets.button import BigParamControl, BigMultiParamToggle
 from openpilot.selfdrive.ui.sunnypilot.mici.widgets.button import BigPolygonMultiParamToggle
+from openpilot.sunnypilot.selfdrive.car.longitudinal import ICBM_OPENPILOT_LONGITUDINAL
 from openpilot.system.ui.lib.application import gui_app
 from openpilot.selfdrive.ui.layouts.settings.common import restart_needed_callback
 from openpilot.selfdrive.ui.ui_state import ui_state
@@ -21,6 +22,7 @@ class TogglesLayoutMici(NavScroller):
     self._speed_limit_source_toggle = BigPolygonMultiParamToggle("sla source", "SpeedLimitPolicy",
                                                                  ["car only", "map only", "car first", "map first", "combined"])
     icbm_toggle = BigParamControl("icbm", "IntelligentCruiseButtonManagement")
+    self._icbm_op_long_toggle = BigParamControl("op long target for icbm", ICBM_OPENPILOT_LONGITUDINAL)
     scc_vision_toggle = BigParamControl("smart cruise - vision", "SmartCruiseControlVision")
     scc_map_toggle = BigParamControl("smart cruise - map", "SmartCruiseControlMap")
     is_metric_toggle = BigParamControl("use metric units", "IsMetric")
@@ -34,6 +36,7 @@ class TogglesLayoutMici(NavScroller):
       self._personality_toggle,
       self._experimental_btn,
       icbm_toggle,
+      self._icbm_op_long_toggle,
       self._speed_limit_mode_toggle,
       self._speed_limit_source_toggle,
       scc_vision_toggle,
@@ -57,6 +60,7 @@ class TogglesLayoutMici(NavScroller):
       ("SmartCruiseControlMap", scc_map_toggle),
       ("SmartCruiseControlVision", scc_vision_toggle),
       ("IntelligentCruiseButtonManagement", icbm_toggle),
+      (ICBM_OPENPILOT_LONGITUDINAL, self._icbm_op_long_toggle),
       ("OpenpilotEnabledToggle", enable_openpilot),
     )
 
@@ -98,7 +102,7 @@ class TogglesLayoutMici(NavScroller):
 
     # CP gating for experimental mode
     if ui_state.CP is not None:
-      if ui_state.has_longitudinal_control:
+      if ui_state.has_longitudinal_control or ui_state.has_icbm_openpilot_long:
         self._experimental_btn.set_visible(True)
         self._personality_toggle.set_visible(True)
       else:
@@ -107,6 +111,14 @@ class TogglesLayoutMici(NavScroller):
         self._experimental_btn.set_checked(False)
         self._personality_toggle.set_visible(False)
         ui_state.params.remove("ExperimentalMode")
+
+    icbm_op_long_available = ui_state.CP is not None and ui_state.CP_SP is not None and \
+                             ui_state.CP_SP.intelligentCruiseButtonManagementAvailable and not ui_state.has_longitudinal_control
+    self._icbm_op_long_toggle.set_visible(icbm_op_long_available)
+    if icbm_op_long_available:
+      self._icbm_op_long_toggle.set_enabled(ui_state.params.get_bool("IntelligentCruiseButtonManagement"))
+    else:
+      ui_state.params.remove(ICBM_OPENPILOT_LONGITUDINAL)
 
     # Refresh toggles from params to mirror external changes
     for key, item in self._refresh_toggles:

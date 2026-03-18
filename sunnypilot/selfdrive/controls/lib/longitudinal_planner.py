@@ -23,6 +23,8 @@ LongitudinalPlanSource = custom.LongitudinalPlanSP.LongitudinalPlanSource
 
 class LongitudinalPlannerSP:
   def __init__(self, CP: structs.CarParams, CP_SP: structs.CarParamsSP, mpc):
+    self.CP = CP
+    self.CP_SP = CP_SP
     self.events_sp = EventsSP()
     self.resolver = SpeedLimitResolver()
     self.dec = DynamicExperimentalController(CP, mpc)
@@ -85,7 +87,7 @@ class LongitudinalPlannerSP:
 
     longitudinalPlanSP = plan_sp_send.longitudinalPlanSP
     longitudinalPlanSP.longitudinalPlanSource = self.source
-    longitudinalPlanSP.vTarget = float(self.output_v_target)
+    longitudinalPlanSP.vTarget = float(self.get_icbm_v_target(sm))
     longitudinalPlanSP.aTarget = float(self.output_a_target)
     longitudinalPlanSP.events = self.events_sp.to_msg()
 
@@ -139,3 +141,6 @@ class LongitudinalPlannerSP:
     e2eAlerts.leadDepartAlert = self.e2e_alerts_helper.lead_depart_alert
 
     pm.send('longitudinalPlanSP', plan_sp_send)
+
+  def get_icbm_v_target(self, sm: messaging.SubMaster) -> float:
+    return self.output_v_target

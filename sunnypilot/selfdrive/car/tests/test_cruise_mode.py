@@ -1,17 +1,34 @@
-from cereal import car
+from cereal import car, custom
 from openpilot.common.parameterized import parameterized_class
 from openpilot.selfdrive.selfdrived.events import Events
+from openpilot.sunnypilot.selfdrive.car.longitudinal import ICBM_OPENPILOT_LONGITUDINAL
 from openpilot.sunnypilot.selfdrive.car.cruise_helpers import CruiseHelper, DISTANCE_LONG_PRESS
 
 ButtonEvent = car.CarState.ButtonEvent
 ButtonType = car.CarState.ButtonEvent.Type
 
 
-@parameterized_class(('openpilot_longitudinal',), [(True,)])
+class FakeParams:
+  def __init__(self, values):
+    self.values = values
+
+  def get_bool(self, key):
+    return bool(self.values.get(key, False))
+
+  def put_bool_nonblocking(self, key, value):
+    self.values[key] = value
+
+
+@parameterized_class(('openpilot_longitudinal', 'use_icbm_op_long'), [(True, False), (False, True)])
 class TestCruiseHelper:
   def setup_method(self):
     self.CP = car.CarParams(openpilotLongitudinalControl=self.openpilot_longitudinal)
-    self.cruise_helper = CruiseHelper(self.CP)
+    self.CP_SP = custom.CarParamsSP(intelligentCruiseButtonManagementAvailable=self.use_icbm_op_long)
+    self.cruise_helper = CruiseHelper(self.CP, self.CP_SP)
+    self.cruise_helper.params = FakeParams({
+      "IntelligentCruiseButtonManagement": self.use_icbm_op_long,
+      ICBM_OPENPILOT_LONGITUDINAL: self.use_icbm_op_long,
+    })
     self.cruise_helper.experimental_mode_switched = False
     self.events = Events()
 
